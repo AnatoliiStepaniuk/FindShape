@@ -1,48 +1,100 @@
 #!/usr/bin/env python3
-"""Малює рівні «Body» і «Face» — людину спереду й обличчя.
+"""Робить рівні «Body» і «Face» зі справжніх векторних малюнків.
 
-Тут немає жодного зовнішнього джерела даних: фігури рахуються формулами.
-Парні частини (очі, вуха, руки, ноги) — це одна фігура з двох багатокутників,
-бо в форматі рівня ідентифікатор фігури — її назва.
+Контури не вигадуються: беруться з SVG (public domain, джерела в README) і
+розрізаються на названі частини площинами. Парні частини — око, вухо, рука,
+нога — це одна фігура з кількох багатокутників, бо ідентифікатор фігури у
+форматі рівня — її назва.
 
     python3 tools/make_human_levels.py
 """
 
 import json
-import math
 import os
+import sys
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "levels")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from svg_paths import area, load_polygons, simplify   # noqa: E402
 
-def ellipse(cx, cy, rx, ry, steps=28, start=0.0, end=math.tau):
-    span = end - start
-    return [[round(cx + rx * math.cos(start + span * i / steps), 1),
-             round(cy + ry * math.sin(start + span * i / steps), 1)]
-            for i in range(steps + (0 if span >= math.tau - 1e-9 else 1))]
-
-
-def capsule(x0, y0, x1, y1, width, steps=10):
-    """Витягнута фігура з круглими кінцями — рука, нога, палець."""
-    dx, dy = x1 - x0, y1 - y0
-    length = math.hypot(dx, dy) or 1
-    ux, uy = dx / length, dy / length
-    nx, ny = -uy, ux
-    r = width / 2
-    points = []
-    for i in range(steps + 1):                       # півколо навколо кінця (x1, y1)
-        a = math.pi * i / steps
-        points.append((x1 + nx * r * math.cos(a) + ux * r * math.sin(a),
-                       y1 + ny * r * math.cos(a) + uy * r * math.sin(a)))
-    for i in range(steps + 1):                       # і назад навколо кінця (x0, y0)
-        a = math.pi * i / steps
-        points.append((x0 - nx * r * math.cos(a) - ux * r * math.sin(a),
-                       y0 - ny * r * math.cos(a) - uy * r * math.sin(a)))
-    return [[round(x, 1), round(y, 1)] for x, y in points]
+HERE = os.path.dirname(os.path.abspath(__file__))
+LEVELS = os.path.join(os.path.dirname(HERE), "levels")
 
 
-def mirror(polygon, axis):
-    return [[round(2 * axis - x, 1), y] for x, y in reversed(polygon)]
+# ---------- різання ----------
+
+def half_plane(x0, y0, x1, y1, keep_left=True):
+    """Півплощина по прямій через дві точки; keep_left — з якого боку лишаємо."""
+    a, b = y1 - y0, x0 - x1
+    c = -(a * x0 + b * y0)
+    return (a, b, c) if keep_left else (-a, -b, -c)
+
+
+def below(y):
+    return (0.0, 1.0, -y)          # y <= межа
+
+
+def above(y):
+    return (0.0, -1.0, y)          # y >= межа
+
+
+def left_of(x):
+    return (1.0, 0.0, -x)          # x <= межа
+
+
+def right_of(x):
+    return (-1.0, 0.0, x)          # x >= межа
+
+
+def clip(polygon, planes):
+    """Sutherland–Hodgman: лишає частину контуру всередині опуклої області."""
+    out = list(polygon)
+    for a, b, c in planes:
+        if not out:
+            return []
+        inp, out = out, []
+
+        def side(p):
+            return a * p[0] + b * p[1] + c
+
+        prev = inp[-1]
+        prev_in = side(prev) <= 0
+        for cur in inp:
+            cur_in = side(cur) <= 0
+            if cur_in != prev_in:
+                t = side(prev) / (side(prev) - side(cur))
+                out.append((prev[0] + t * (cur[0] - prev[0]),
+                            prev[1] + t * (cur[1] - prev[1])))
+            if cur_in:
+                out.append(cur)
+            prev, prev_in = cur, cur_in
+    return out
+
+
+def carve(outline, parts, eps, min_area):
+    """parts: [(назва, [півплощини, ...]), ...] → фігури рівня."""
+    shapes = {}
+    for name, planes in parts:
+        piece = clip(outline, planes)
+        if len(piece) < 4 or area(piece) < min_area:
+            continue
+        piece = simplify(piece, eps)
+        if len(piece) > 3:
+            shapes.setdefault(name, []).append(piece)
+    return [{"name": name, "polygons": polys} for name, polys in shapes.items()]
+
+
+def normalize(shapes, height=1000.0):
+    """Зсуває до нуля й масштабує, щоб числа у файлі були людські."""
+    points = [p for s in shapes for poly in s["polygons"] for p in poly]
+    x0 = min(p[0] for p in points)
+    y0 = min(p[1] for p in points)
+    y1 = max(p[1] for p in points)
+    k = height / (y1 - y0)
+    for shape in shapes:
+        shape["polygons"] = [[[round((x - x0) * k, 1), round((y - y0) * k, 1)] for x, y in poly]
+                             for poly in shape["polygons"]]
+    return shapes
 
 
 def dumps_level(shapes, per_line=6):
@@ -62,78 +114,108 @@ def dumps_level(shapes, per_line=6):
     return "\n".join(out) + "\n"
 
 
-def body():
-    """Людина спереду; вісь симетрії — x = 300."""
-    axis = 300
+# ---------- рівень «Body» ----------
 
-    upper_arm = capsule(214, 242, 196, 348, 34)
-    forearm = capsule(193, 376, 184, 452, 29)
-    elbow = ellipse(195, 362, 20, 18)
-    hand = ellipse(180, 480, 21, 29)
-    shoulder = ellipse(241, 219, 38, 27)
+def build_body():
+    """Силует людини → 11 частин.
 
-    thigh = capsule(278, 540, 272, 688, 46)
-    shin = capsule(268, 738, 262, 838, 36)
-    knee = ellipse(270, 712, 24, 23)
-    foot = [[240, 846], [286, 846], [290, 874], [216, 874], [220, 858]]
+    Числа зняті з самого контуру горизонтальними промірами: пахва ≈ 750,
+    лікоть 880–980, зап'ясток ≈ 1170, розкрок ≈ 1270, коліно 1570–1670,
+    щиколотка ≈ 2040. Вісь симетрії x = 487.
+    """
+    source = os.path.join(HERE, "source-human-body.svg")
+    outline = max(load_polygons(source)[0]["polygons"], key=area)
 
-    return [
-        {"name": "Head", "polygons": [ellipse(axis, 100, 48, 60)]},
-        {"name": "Neck", "polygons": [[[282, 152], [318, 152], [322, 198], [278, 198]]]},
-        {"name": "Shoulder", "polygons": [shoulder, mirror(shoulder, axis)]},
-        {"name": "Chest", "polygons": [[[240, 198], [360, 198], [368, 290], [364, 340],
-                                        [236, 340], [232, 290]]]},
-        {"name": "Belly", "polygons": [[[236, 340], [364, 340], [352, 468], [338, 520],
-                                        [262, 520], [248, 468]]]},
-        {"name": "Arm", "polygons": [upper_arm, forearm,
-                                     mirror(upper_arm, axis), mirror(forearm, axis)]},
-        {"name": "Elbow", "polygons": [elbow, mirror(elbow, axis)]},
-        {"name": "Hand", "polygons": [hand, mirror(hand, axis)]},
-        {"name": "Leg", "polygons": [thigh, shin, mirror(thigh, axis), mirror(shin, axis)]},
-        {"name": "Knee", "polygons": [knee, mirror(knee, axis)]},
-        {"name": "Foot", "polygons": [foot, mirror(foot, axis)]},
+    axis = 487.0
+    torso = 298.0                                     # бік грудей
+    gap = 260.0                                       # порожнеча між рукою й тулубом
+    hip_left = half_plane(298, 760, 240, 1270, keep_left=False)    # тулуб донизу звужується
+    hip_right = half_plane(2 * axis - 298, 760, 2 * axis - 240, 1270, keep_left=True)
+
+    def mirrored(planes):
+        return [(-a, b, c + a * 2 * axis) for a, b, c in planes]
+
+    parts = [
+        ("Head", [below(300)]),
+        ("Neck", [above(300), below(400)]),
+        ("Chest", [above(400), below(760), right_of(torso), left_of(2 * axis - torso)]),
+        ("Belly", [above(760), below(1270), hip_left, hip_right]),
     ]
+    for name, planes in (
+        ("Shoulder", [above(400), below(620), left_of(torso)]),
+        ("Arm", [above(620), below(880), left_of(torso)]),
+        ("Elbow", [above(880), below(980), left_of(gap)]),
+        ("Arm", [above(980), below(1170), left_of(gap)]),
+        # below(1400) — щоб у смугу кисті не потрапила ступня того ж боку
+        ("Hand", [above(1170), below(1400), left_of(gap)]),
+        # right_of(220) відрізає кисть: без нього вона потрапляє у смугу стегна
+        # і різалка зшиває два окремі шматки перемичкою через увесь малюнок
+        ("Leg", [above(1270), below(1570), left_of(axis), right_of(220)]),
+        ("Knee", [above(1570), below(1670), left_of(axis), right_of(220)]),
+        ("Leg", [above(1670), below(2040), left_of(axis), right_of(220)]),
+        ("Foot", [above(2040), left_of(axis), right_of(220)]),
+    ):
+        parts.append((name, planes))
+        parts.append((name, mirrored(planes)))
+
+    return normalize(carve(outline, parts, eps=1.6, min_area=200), height=1000)
 
 
-def face():
-    """Обличчя анфас. Велике «Face» лежить під низом, деталі — поверх нього:
-    двіжок сам малює дрібніші фігури вище, тому клік завжди влучає у деталь."""
-    axis = 300
-    cy, rx, ry = 380, 175, 225
+# ---------- рівень «Face» ----------
 
-    hair_outer = ellipse(axis, cy - 6, rx + 8, ry + 12, steps=24,
-                         start=math.pi * 1.06, end=math.pi * 1.94)
-    hair = hair_outer + [[452, 292], [420, 258], [366, 242], [300, 254],
-                         [234, 242], [180, 258], [148, 292]]
+# Малюнок обличчя складається з окремих шляхів; ось хто є хто (порядок у файлі).
+# Беремо лише ті шматки волосся, які в малюнку видно: зовнішню масу і чубчик.
+# Решта (пасма за обличчям, відблиски) в оригіналі сховані під обличчям, а гра
+# малює кожен багатокутник повністю — вони вилізли б плямами поверх щік.
+FACE_PARTS = {
+    0: "Hair", 12: "Hair",
+    5: "Face",
+    6: "Nose",
+    7: "Eyebrow", 8: "Eyebrow",
+    9: "Eye", 10: "Eye",
+    11: "Mouth",
+}
+FACE_EARS = 4          # обидва вуха одним шляхом, здебільшого сховані за обличчям
 
-    forehead = ellipse(axis, 300, 118, 52)
-    cheek = ellipse(222, 452, 62, 52)
-    eye = ellipse(238, 362, 36, 21)
-    brow = [[198, 316], [238, 296], [280, 312], [278, 332], [238, 314], [200, 334]]
-    ear = ellipse(126, 392, 22, 44)
 
-    return [
-        {"name": "Face", "polygons": [ellipse(axis, cy, rx, ry, steps=36)]},
-        {"name": "Hair", "polygons": [hair]},
-        {"name": "Forehead", "polygons": [forehead]},
-        {"name": "Eyebrow", "polygons": [brow, mirror(brow, axis)]},
-        {"name": "Eye", "polygons": [eye, mirror(eye, axis)]},
-        {"name": "Nose", "polygons": [[[300, 372], [318, 440], [326, 462], [300, 472],
-                                       [274, 462], [282, 440]]]},
-        {"name": "Mouth", "polygons": [ellipse(axis, 532, 54, 21)]},
-        {"name": "Cheek", "polygons": [cheek, mirror(cheek, axis)]},
-        {"name": "Chin", "polygons": [ellipse(axis, 572, 66, 34)]},
-        {"name": "Ear", "polygons": [ear, mirror(ear, axis)]},
-    ]
+def build_face():
+    """Обличчя дитини → 7 частин. Вуха доводиться відрізати по краю обличчя:
+    у малюнку вони лежать під ним, а гра малює кожну фігуру повністю."""
+    source = os.path.join(HERE, "source-human-face.svg")
+    elements = load_polygons(source, steps=10)
+    if len(elements) != 17:
+        raise SystemExit(f"очікував 17 елементів у {source}, а там {len(elements)}")
+
+    shapes = {}
+    for index, name in FACE_PARTS.items():
+        for polygon in elements[index]["polygons"]:
+            if area(polygon) > 8:
+                shapes.setdefault(name, []).append(simplify(polygon, 0.25))
+
+    # край обличчя на висоті вух — майже пряма, тому вистачає однієї площини
+    ears = elements[FACE_EARS]["polygons"][0]
+    for planes in ([half_plane(17.6, 66, 22.2, 98, keep_left=True)],
+                   [half_plane(109.9, 66, 105.2, 98, keep_left=False)]):
+        piece = clip(ears, planes)
+        if len(piece) > 3:
+            shapes.setdefault("Ear", []).append(simplify(piece, 0.25))
+
+    return normalize([{"name": n, "polygons": p} for n, p in shapes.items()], height=1000)
+
+
+def write(name, shapes):
+    path = os.path.join(LEVELS, f"{name}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(dumps_level(shapes))
+    parts = sum(len(s["polygons"]) for s in shapes)
+    points = sum(len(p) for s in shapes for p in s["polygons"])
+    print(f"{path}: фігур={len(shapes)} багатокутників={parts} точок={points}")
+    print("  " + ", ".join(f"{s['name']}×{len(s['polygons'])}" for s in shapes))
 
 
 def main():
-    for name, shapes in (("body", body()), ("face", face())):
-        path = os.path.join(OUT_DIR, f"{name}.json")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(dumps_level(shapes))
-        points = sum(len(p) for s in shapes for p in s["polygons"])
-        print(f"{path}: фігур={len(shapes)} точок={points}")
+    write("body", build_body())
+    write("face", build_face())
 
 
 if __name__ == "__main__":

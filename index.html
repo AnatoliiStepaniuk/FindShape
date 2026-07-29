@@ -112,7 +112,7 @@
   #stage { flex: 1; min-height: 0; position: relative; }
   svg { width: 100%; height: 100%; display: block; }
 
-  .shape polygon {
+  polygon.shape {
     fill: var(--fill, var(--idle));
     stroke: var(--line);
     stroke-width: 1.2;
@@ -121,8 +121,8 @@
     cursor: pointer;
   }
 
-  .shape.found polygon { fill: var(--ok); }
-  .shape.miss polygon { fill: var(--miss); }
+  polygon.shape.found { fill: var(--ok); }
+  polygon.shape.miss { fill: var(--miss); }
 
   #bar.new-task { animation: bar-flash .9s ease-out; }
   #bar.new-task .target { animation: task-pop .4s ease-out; }
@@ -137,14 +137,14 @@
     to   { opacity: 1; transform: none; }
   }
 
-  .shape.revealed polygon {
+  polygon.shape.revealed {
     fill: var(--shown);
     stroke: #a86a12;
     stroke-width: 2;
     animation: pulse .7s ease-in-out 2;
   }
 
-  .shape.hint polygon {
+  polygon.shape.hint {
     stroke: #2b6cb0;
     stroke-width: 3;
     animation: pulse 1s ease-in-out infinite;
@@ -152,7 +152,7 @@
 
   @keyframes pulse { 50% { stroke-opacity: .25; } }
 
-  .shape text {
+  .labels text {
     fill: #14202a;
     paint-order: stroke;
     stroke: #fff;
@@ -378,25 +378,35 @@ function draw(shapes) {
 
   const fills = colorize(shapes, Math.max(box.w, box.h) * 0.006);
 
-  // Великі фігури — під низ, дрібні — зверху, щоб дрібне лишалось клікабельним.
+  // Великі шматки — під низ, дрібні — зверху, щоб дрібне лишалось клікабельним.
+  // Рахуємо кожен багатокутник окремо: чубчик має лягти поверх обличчя, хоч
+  // «волосся» загалом і більше за нього.
   const order = shapes
-    .map((shape, index) => ({ shape, index, area: Math.max(...shape.polygons.map(polygonArea)) }))
+    .flatMap((shape, index) => shape.polygons.map((polygon) => ({ index, polygon, area: polygonArea(polygon) })))
     .sort((a, b) => b.area - a.area);
 
-  const nodes = new Array(shapes.length);
-  for (const { shape, index, area } of order) {
-    const group = document.createElementNS(SVG_NS, "g");
-    group.setAttribute("class", "shape");
-    group.style.setProperty("--fill", fills[index]);
-    group.dataset.index = String(index);
-    for (const polygon of shape.polygons) {
-      const node = document.createElementNS(SVG_NS, "polygon");
-      node.setAttribute("points", polygon.map(([x, y]) => `${x},${y}`).join(" "));
-      group.append(node);
-    }
-    ui.map.append(group);
-    nodes[index] = { group, area, biggest: shape.polygons.reduce((a, b) => polygonArea(a) > polygonArea(b) ? a : b) };
+  const nodes = shapes.map((shape, index) => ({
+    index,
+    parts: [],
+    biggest: shape.polygons.reduce((a, b) => (polygonArea(a) > polygonArea(b) ? a : b)),
+    area: Math.max(...shape.polygons.map(polygonArea)),
+  }));
+
+  for (const { index, polygon } of order) {
+    const node = document.createElementNS(SVG_NS, "polygon");
+    node.setAttribute("class", "shape");
+    node.setAttribute("points", polygon.map(([x, y]) => `${x},${y}`).join(" "));
+    node.style.setProperty("--fill", fills[index]);
+    node.dataset.index = String(index);
+    ui.map.append(node);
+    nodes[index].parts.push(node);
   }
+
+  // Підписи — окремим шаром зверху, інакше їх ховають фігури, намальовані пізніше.
+  const labels = document.createElementNS(SVG_NS, "g");
+  labels.setAttribute("class", "labels");
+  ui.map.append(labels);
+  for (const node of nodes) node.labels = labels;
   return nodes;
 }
 
@@ -434,7 +444,7 @@ function label(shape, node) {
     tspan.textContent = line;
     text.append(tspan);
   }
-  node.group.append(text);
+  node.labels.append(text);
   return true;
 }
 
@@ -508,16 +518,20 @@ function flash(name, event, kind) {
   flash.timer = setTimeout(() => { ui.flash.dataset.show = "0"; }, 1400);
 }
 
+function mark(node, className, on = true) {
+  for (const part of node.parts) part.classList.toggle(className, on);
+}
+
 function onClick(event) {
   if (!state || state.current === null) return;
-  const group = event.target.closest(".shape");
-  if (!group) return;
-  const index = Number(group.dataset.index);
+  const hit = event.target.closest(".shape");
+  if (!hit) return;
+  const index = Number(hit.dataset.index);
 
   if (index === state.current) {
     const node = state.nodes[index];
-    node.group.classList.remove("hint");
-    node.group.classList.add("found");
+    mark(node, "hint", false);
+    mark(node, "found");
     if (!label(state.shapes[index], node)) flash(state.shapes[index].name, event, "ok");
     state.right++;
     nextRound();
@@ -526,10 +540,10 @@ function onClick(event) {
 
   state.misses++;
   flash(state.shapes[index].name, event, "miss");
-  group.classList.add("miss");
-  setTimeout(() => group.classList.remove("miss"), 450);
+  mark(state.nodes[index], "miss");
+  setTimeout(() => mark(state.nodes[index], "miss", false), 450);
 
-  if (state.misses === MISS_HINT) state.nodes[state.current].group.classList.add("hint");
+  if (state.misses === MISS_HINT) mark(state.nodes[state.current], "hint");
   if (state.misses >= MISS_LIMIT) giveUp();
 }
 
@@ -537,8 +551,8 @@ function onClick(event) {
 function giveUp() {
   const index = state.current;
   const node = state.nodes[index];
-  node.group.classList.remove("hint");
-  node.group.classList.add("revealed");
+  mark(node, "hint", false);
+  mark(node, "revealed");
   label(state.shapes[index], node);
   state.wrong++;
   state.current = null;               // під час показу кліки не рахуються
