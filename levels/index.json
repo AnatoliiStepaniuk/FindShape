@@ -1,5 +1,7 @@
 {
   "Європа": "europe.json",
   "Африка": "africa.json",
-  "Південна Америка": "south-america.json"
+  "Південна Америка": "south-america.json",
+  "Body 🇬🇧": "body.json",
+  "Face 🇬🇧": "face.json"
 }

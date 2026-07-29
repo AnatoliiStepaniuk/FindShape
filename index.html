@@ -269,7 +269,8 @@
 // двіжок виводить сам з координат.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const PALETTE = ["#f0b49f", "#9ec9e8", "#aed8a4", "#f5d194", "#c7b3e0", "#9dd3ca", "#eeb0c8", "#cfc6ae"];
+// без зеленого: зелений у грі означає «знайдено»
+const PALETTE = ["#f0b49f", "#9ec9e8", "#f5d194", "#c7b3e0", "#9dd3ca", "#eeb0c8", "#cfc6ae"];
 const MISS_HINT = 2;       // після стількох промахів ціль починає пульсувати
 const MISS_LIMIT = 3;      // а після стількох раунд зараховується як помилка
 const ROUND_SHARE = 0.2;   // яку частку фігур рівня питаємо за одну гру
@@ -327,8 +328,9 @@ function centroid(polygon) {
   return [cx / (3 * area), cy / (3 * area)];
 }
 
-// Сусідство визначаємо по відстані між точками — жодних знань про карти:
-// дві фігури сусідні, якщо їхні контури десь майже торкаються.
+// Сусідство визначаємо геометрично — жодних знань про карти. Дві фігури
+// сусідні, якщо їхні контури майже торкаються (спільний кордон на карті) або
+// якщо вони помітно накладаються габаритами (частини тіла одна поверх одної).
 function neighbours(shapes, tolerance) {
   const points = shapes.map((s) => s.polygons.flat());
   const boxes = shapes.map((s) => bounds([s]));
@@ -338,9 +340,14 @@ function neighbours(shapes, tolerance) {
       const A = boxes[a], B = boxes[b];
       if (A.x1 + tolerance < B.x0 || B.x1 + tolerance < A.x0) continue;
       if (A.y1 + tolerance < B.y0 || B.y1 + tolerance < A.y0) continue;
-      const touch = points[a].some(([x, y]) =>
+
+      const over = Math.max(0, Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0))
+                 * Math.max(0, Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0));
+      const smaller = Math.min(A.w * A.h, B.w * B.h) || 1;
+
+      const near = over > smaller * 0.25 || points[a].some(([x, y]) =>
         points[b].some(([u, v]) => Math.abs(x - u) <= tolerance && Math.abs(y - v) <= tolerance));
-      if (touch) { result[a].add(b); result[b].add(a); }
+      if (near) { result[a].add(b); result[b].add(a); }
     }
   }
   return result;
