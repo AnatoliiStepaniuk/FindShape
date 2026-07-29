@@ -12,6 +12,7 @@
     --muted: #6b7c88;
     --ok: #3fa96b;
     --miss: #e0574f;
+    --shown: #f0b429;
     --line: #ffffff;
     --idle: #d6dfe6;
   }
@@ -94,6 +95,20 @@
     overflow-wrap: anywhere;
   }
 
+  #tally {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-size: clamp(16px, 4.4vw, 21px);
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  #tally .bad { color: var(--miss); }
+  #tally .ok { color: var(--ok); }
+
   #stage { flex: 1; min-height: 0; position: relative; }
   svg { width: 100%; height: 100%; display: block; }
 
@@ -108,6 +123,26 @@
 
   .shape.found polygon { fill: var(--ok); }
   .shape.miss polygon { fill: var(--miss); }
+
+  #bar.new-task { animation: bar-flash .9s ease-out; }
+  #bar.new-task .target { animation: task-pop .4s ease-out; }
+
+  @keyframes bar-flash {
+    0%   { background: #cbe4f7; }
+    100% { background: var(--panel); }
+  }
+
+  @keyframes task-pop {
+    from { opacity: 0; transform: translateY(8px) scale(.96); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .shape.revealed polygon {
+    fill: var(--shown);
+    stroke: #a86a12;
+    stroke-width: 2;
+    animation: pulse .7s ease-in-out 2;
+  }
 
   .shape.hint polygon {
     stroke: #2b6cb0;
@@ -203,6 +238,10 @@
       <div class="hint-word">Знайди</div>
       <div class="target"></div>
     </div>
+    <div id="tally">
+      <span class="ok">✅ <b id="tally-ok">0</b></span>
+      <span class="bad">❌ <b id="tally-bad">0</b></span>
+    </div>
   </div>
   <div id="stage">
     <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -218,7 +257,6 @@
   </div>
   <div id="score">
     <span id="progress"></span>
-    <span id="firsttry"></span>
   </div>
 </section>
 
@@ -232,7 +270,8 @@
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PALETTE = ["#f0b49f", "#9ec9e8", "#aed8a4", "#f5d194", "#c7b3e0", "#9dd3ca", "#eeb0c8", "#cfc6ae"];
-const HINT_AFTER = 4;      // промахів по одній цілі, після яких підказуємо
+const MISS_HINT = 2;       // після стількох промахів ціль починає пульсувати
+const MISS_LIMIT = 3;      // а після стількох раунд зараховується як помилка
 const ROUND_SHARE = 0.2;   // яку частку фігур рівня питаємо за одну гру
 const MIN_ROUNDS = 5;      // але не менше, ніж стільки
 const LABEL_MIN = 9;       // межі розміру підпису на знайденій фігурі
@@ -241,8 +280,8 @@ const LABEL_MAX = 22;
 const el = (id) => document.getElementById(id);
 const ui = {
   menu: el("menu"), game: el("game"), levels: el("levels"), error: el("error"),
-  map: el("map"), stage: el("stage"), flash: el("flash"), target: document.querySelector("#task .target"),
-  progress: el("progress"), firsttry: el("firsttry"),
+  bar: el("bar"), map: el("map"), stage: el("stage"), flash: el("flash"), target: document.querySelector("#task .target"),
+  progress: el("progress"), tallyOk: el("tally-ok"), tallyBad: el("tally-bad"),
   hintWord: document.querySelector("#task .hint-word"),
   done: el("done"), doneText: el("done-text"),
 };
@@ -413,8 +452,8 @@ function start(shapes) {
     queue: shuffled(shapes.map((_, i) => i)).slice(0, rounds),
     current: null,
     misses: 0,
-    found: 0,
-    clean: 0,
+    right: 0,
+    wrong: 0,
   };
   ui.done.hidden = true;
   nextRound();
@@ -425,20 +464,29 @@ function nextRound() {
   state.current = state.queue.pop() ?? null;
   updateScore();
   if (state.current === null) return finish();
-  const name = state.shapes[state.current].name;
   ui.hintWord.hidden = false;
-  ui.target.textContent = name;
+  ui.target.textContent = state.shapes[state.current].name;
+  announce();
+}
+
+// Голосу немає, тому нове завдання видно: смуга спалахує, назва вискакує.
+function announce() {
+  ui.bar.classList.remove("new-task");
+  void ui.bar.offsetWidth;          // без цього анімація не перезапуститься
+  ui.bar.classList.add("new-task");
 }
 
 function updateScore() {
-  ui.progress.textContent = `Знайдено ${state.found} з ${state.total}`;
-  ui.firsttry.textContent = `Без помилок: ${state.clean}`;
+  const round = Math.min(state.right + state.wrong + 1, state.total);
+  ui.progress.textContent = `Раунд ${round} з ${state.total}`;
+  ui.tallyOk.textContent = state.right;
+  ui.tallyBad.textContent = state.wrong;
 }
 
 function finish() {
   ui.target.textContent = "";
   ui.hintWord.hidden = true;
-  ui.doneText.textContent = `З першого разу: ${state.clean} з ${state.total}`;
+  ui.doneText.textContent = `Правильно: ${state.right} з ${state.total}`;
   ui.done.hidden = false;
 }
 
@@ -464,8 +512,7 @@ function onClick(event) {
     node.group.classList.remove("hint");
     node.group.classList.add("found");
     if (!label(state.shapes[index], node)) flash(state.shapes[index].name, event, "ok");
-    state.found++;
-    if (state.misses === 0) state.clean++;
+    state.right++;
     nextRound();
     return;
   }
@@ -474,7 +521,22 @@ function onClick(event) {
   flash(state.shapes[index].name, event, "miss");
   group.classList.add("miss");
   setTimeout(() => group.classList.remove("miss"), 450);
-  if (state.misses === HINT_AFTER) state.nodes[state.current].group.classList.add("hint");
+
+  if (state.misses === MISS_HINT) state.nodes[state.current].group.classList.add("hint");
+  if (state.misses >= MISS_LIMIT) giveUp();
+}
+
+// Спроби вичерпано: показуємо, де ця фігура була, і зараховуємо помилку.
+function giveUp() {
+  const index = state.current;
+  const node = state.nodes[index];
+  node.group.classList.remove("hint");
+  node.group.classList.add("revealed");
+  label(state.shapes[index], node);
+  state.wrong++;
+  state.current = null;               // під час показу кліки не рахуються
+  updateScore();
+  setTimeout(() => { if (state) nextRound(); }, 1600);
 }
 
 /* ---------- рівні ---------- */
