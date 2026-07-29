@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FindShape</title>
+<style>
+  :root {
+    --bg: #eef4f8;
+    --panel: #ffffff;
+    --ink: #23303a;
+    --muted: #6b7c88;
+    --ok: #3fa96b;
+    --miss: #e0574f;
+    --line: #ffffff;
+    --idle: #d6dfe6;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  body { display: flex; flex-direction: column; touch-action: manipulation; }
+
+  /* ---------- меню ---------- */
+
+  #menu {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 24px;
+  }
+
+  #menu h1 { margin: 0; font-size: clamp(32px, 9vw, 64px); letter-spacing: -1px; }
+  #menu p { margin: -18px 0 0; color: var(--muted); font-size: clamp(15px, 4vw, 19px); }
+
+  #levels { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
+
+  .level-btn {
+    font: inherit;
+    font-size: clamp(19px, 5vw, 26px);
+    padding: 18px 30px;
+    border: none;
+    border-radius: 18px;
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 3px 10px rgba(35, 48, 58, .12);
+    cursor: pointer;
+  }
+
+  .level-btn:active { transform: translateY(1px); }
+
+  /* ---------- гра ---------- */
+
+  #game { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  #bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px calc(12px + env(safe-area-inset-top));
+    background: var(--panel);
+    box-shadow: 0 2px 8px rgba(35, 48, 58, .08);
+  }
+
+  #back {
+    font: inherit;
+    font-size: 22px;
+    line-height: 1;
+    border: none;
+    background: none;
+    color: var(--muted);
+    padding: 8px 10px;
+    cursor: pointer;
+  }
+
+  #task { flex: 1; min-width: 0; }
+  #task .hint-word { font-size: clamp(13px, 3.4vw, 15px); color: var(--muted); }
+  #task .target {
+    font-size: clamp(24px, 6.4vw, 38px);
+    font-weight: 700;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  #speak {
+    font-size: 26px;
+    border: none;
+    background: none;
+    padding: 8px 10px;
+    cursor: pointer;
+    opacity: .85;
+  }
+
+  #speak[data-off="1"] { opacity: .3; }
+
+  #stage { flex: 1; min-height: 0; position: relative; }
+  svg { width: 100%; height: 100%; display: block; }
+
+  .shape polygon {
+    fill: var(--fill, var(--idle));
+    stroke: var(--line);
+    stroke-width: 1.2;
+    stroke-linejoin: round;
+    transition: fill .25s;
+    cursor: pointer;
+  }
+
+  .shape.found polygon { fill: var(--ok); }
+  .shape.miss polygon { fill: var(--miss); }
+
+  .shape.hint polygon {
+    stroke: #2b6cb0;
+    stroke-width: 3;
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 50% { stroke-opacity: .25; } }
+
+  .shape text {
+    fill: #14202a;
+    paint-order: stroke;
+    stroke: #fff;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    font-weight: 600;
+  }
+
+  #flash {
+    position: absolute;
+    transform: translate(-50%, -140%);
+    background: var(--miss);
+    color: #fff;
+    font-size: clamp(16px, 4.4vw, 22px);
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 14px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .2s;
+    white-space: nowrap;
+  }
+
+  #flash[data-show="1"] { opacity: 1; }
+  #flash[data-kind="ok"] { background: var(--ok); }
+
+  #score {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    color: var(--muted);
+    font-size: clamp(14px, 3.8vw, 17px);
+  }
+
+  /* ---------- фінал ---------- */
+
+  #done {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: rgba(238, 244, 248, .95);
+    text-align: center;
+    padding: 24px;
+  }
+
+  #done h2 { margin: 0; font-size: clamp(28px, 8vw, 44px); }
+  #done p { margin: 0; font-size: clamp(17px, 4.6vw, 22px); color: var(--muted); }
+  #done .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+  [hidden] { display: none !important; }
+
+  #error {
+    padding: 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<section id="menu">
+  <h1>FindShape</h1>
+  <p>Знайди фігуру, яку назвали</p>
+  <div id="levels"></div>
+  <div id="error" hidden></div>
+</section>
+
+<section id="game" hidden>
+  <div id="bar">
+    <button id="back" title="До рівнів">←</button>
+    <div id="task">
+      <div class="hint-word">Знайди</div>
+      <div class="target"></div>
+    </div>
+    <button id="speak" title="Озвучити">🔊</button>
+  </div>
+  <div id="stage">
+    <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="flash"></div>
+    <div id="done" hidden>
+      <h2>Готово!</h2>
+      <p id="done-text"></p>
+      <div class="row">
+        <button class="level-btn" id="again">Ще раз</button>
+        <button class="level-btn" id="to-menu">Інші рівні</button>
+      </div>
+    </div>
+  </div>
+  <div id="score">
+    <span id="progress"></span>
+    <span id="firsttry"></span>
+  </div>
+</section>
+
+<script>
+"use strict";
+
+// Двіжок нічого не знає про те, ЩО він показує. Рівень — це список фігур:
+//   [ { "name": "Іспанія", "polygons": [ [[x, y], [x, y], ...], ... ] } ]
+// Назва фігури — її ж ідентифікатор. Решту (масштаб, кольори, порядок питань)
+// двіжок виводить сам з координат.
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const PALETTE = ["#f0b49f", "#9ec9e8", "#aed8a4", "#f5d194", "#c7b3e0", "#9dd3ca", "#eeb0c8", "#cfc6ae"];
+const HINT_AFTER = 4;      // промахів по одній цілі, після яких підказуємо
+const ROUND_SHARE = 0.2;   // яку частку фігур рівня питаємо за одну гру
+const MIN_ROUNDS = 5;      // але не менше, ніж стільки
+const LABEL_MIN = 9;       // межі розміру підпису на знайденій фігурі
+const LABEL_MAX = 22;
+
+const el = (id) => document.getElementById(id);
+const ui = {
+  menu: el("menu"), game: el("game"), levels: el("levels"), error: el("error"),
+  map: el("map"), stage: el("stage"), flash: el("flash"), target: document.querySelector("#task .target"),
+  speak: el("speak"), progress: el("progress"), firsttry: el("firsttry"),
+  hintWord: document.querySelector("#task .hint-word"),
+  done: el("done"), doneText: el("done-text"),
+};
+
+let state = null;
+let speechOff = localStorage.getItem("findshape.mute") === "1";
+
+/* ---------- геометрія ---------- */
+
+function bounds(shapes) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const shape of shapes)
+    for (const polygon of shape.polygons)
+      for (const [x, y] of polygon) {
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x > x1) x1 = x;
+        if (y > y1) y1 = y;
+      }
+  return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+}
+
+function polygonArea(polygon) {
+  let sum = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const [x1, y1] = polygon[i];
+    const [x0, y0] = polygon[(i + polygon.length - 1) % polygon.length];
+    sum += x1 * y0 - x0 * y1;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function centroid(polygon) {
+  let cx = 0, cy = 0, area = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const [x1, y1] = polygon[i];
+    const [x0, y0] = polygon[(i + polygon.length - 1) % polygon.length];
+    const cross = x0 * y1 - x1 * y0;
+    area += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  if (Math.abs(area) < 1e-9) return polygon[0];
+  return [cx / (3 * area), cy / (3 * area)];
+}
+
+// Сусідство визначаємо по відстані між точками — жодних знань про карти:
+// дві фігури сусідні, якщо їхні контури десь майже торкаються.
+function neighbours(shapes, tolerance) {
+  const points = shapes.map((s) => s.polygons.flat());
+  const boxes = shapes.map((s) => bounds([s]));
+  const result = shapes.map(() => new Set());
+  for (let a = 0; a < shapes.length; a++) {
+    for (let b = a + 1; b < shapes.length; b++) {
+      const A = boxes[a], B = boxes[b];
+      if (A.x1 + tolerance < B.x0 || B.x1 + tolerance < A.x0) continue;
+      if (A.y1 + tolerance < B.y0 || B.y1 + tolerance < A.y0) continue;
+      const touch = points[a].some(([x, y]) =>
+        points[b].some(([u, v]) => Math.abs(x - u) <= tolerance && Math.abs(y - v) <= tolerance));
+      if (touch) { result[a].add(b); result[b].add(a); }
+    }
+  }
+  return result;
+}
+
+// Жадібне розфарбування: сусіди різного кольору, порядок сталий між запусками.
+function colorize(shapes, tolerance) {
+  const graph = neighbours(shapes, tolerance);
+  const order = shapes.map((_, i) => i).sort((a, b) => graph[b].size - graph[a].size || a - b);
+  const colors = new Array(shapes.length).fill(-1);
+  for (const i of order) {
+    const taken = new Set([...graph[i]].map((j) => colors[j]));
+    let c = 0;
+    while (taken.has(c)) c++;
+    colors[i] = c % PALETTE.length;
+  }
+  return colors.map((c) => PALETTE[c]);
+}
+
+/* ---------- малювання ---------- */
+
+function draw(shapes) {
+  const box = bounds(shapes);
+  const pad = Math.max(box.w, box.h) * 0.02;
+  ui.map.setAttribute("viewBox", `${box.x0 - pad} ${box.y0 - pad} ${box.w + pad * 2} ${box.h + pad * 2}`);
+  ui.map.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  ui.map.replaceChildren();
+
+  const fills = colorize(shapes, Math.max(box.w, box.h) * 0.006);
+
+  // Великі фігури — під низ, дрібні — зверху, щоб дрібне лишалось клікабельним.
+  const order = shapes
+    .map((shape, index) => ({ shape, index, area: Math.max(...shape.polygons.map(polygonArea)) }))
+    .sort((a, b) => b.area - a.area);
+
+  const nodes = new Array(shapes.length);
+  for (const { shape, index, area } of order) {
+    const group = document.createElementNS(SVG_NS, "g");
+    group.setAttribute("class", "shape");
+    group.style.setProperty("--fill", fills[index]);
+    group.dataset.index = String(index);
+    for (const polygon of shape.polygons) {
+      const node = document.createElementNS(SVG_NS, "polygon");
+      node.setAttribute("points", polygon.map(([x, y]) => `${x},${y}`).join(" "));
+      group.append(node);
+    }
+    ui.map.append(group);
+    nodes[index] = { group, area, biggest: shape.polygons.reduce((a, b) => polygonArea(a) > polygonArea(b) ? a : b) };
+  }
+  return nodes;
+}
+
+// Підпис має влізти у фігуру: спершу міряємо її, потім за потреби ріжемо
+// назву на два рядки і аж тоді добираємо розмір шрифту.
+function label(shape, node) {
+  const [cx, cy] = centroid(node.biggest);
+  const box = bounds([{ polygons: [node.biggest] }]);
+  const words = shape.name.split(" ");
+  let size = Math.min(LABEL_MAX, Math.max(LABEL_MIN, Math.sqrt(node.area) / 3.2));
+  let lines = [shape.name];
+
+  if (words.length > 1 && shape.name.length * size * 0.52 > box.w * 1.15) {
+    let split = 1, best = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const diff = Math.abs(words.slice(0, i).join(" ").length - words.slice(i).join(" ").length);
+      if (diff < best) { best = diff; split = i; }
+    }
+    lines = [words.slice(0, split).join(" "), words.slice(split).join(" ")];
+  }
+
+  const longest = Math.max(...lines.map((line) => line.length));
+  const fitting = box.w * 1.25 / (longest * 0.52);
+  if (fitting < LABEL_MIN) return false;   // замала фігура — підпис лише спалахне
+  size = Math.min(size, fitting);
+
+  const text = document.createElementNS(SVG_NS, "text");
+  text.setAttribute("x", cx);
+  text.setAttribute("y", cy - (lines.length - 1) * size * 0.55);
+  text.setAttribute("font-size", size);
+  for (const [index, line] of lines.entries()) {
+    const tspan = document.createElementNS(SVG_NS, "tspan");
+    tspan.setAttribute("x", cx);
+    if (index) tspan.setAttribute("dy", size * 1.1);
+    tspan.textContent = line;
+    text.append(tspan);
+  }
+  node.group.append(text);
+  return true;
+}
+
+/* ---------- гра ---------- */
+
+function shuffled(list) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function speak(text) {
+  if (speechOff || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "uk-UA";
+  utterance.rate = 0.95;
+  window.speechSynthesis.speak(utterance);
+}
+
+function start(shapes) {
+  const nodes = draw(shapes);
+  const rounds = Math.min(shapes.length, Math.max(MIN_ROUNDS, Math.round(shapes.length * ROUND_SHARE)));
+  state = {
+    shapes,
+    nodes,
+    total: rounds,
+    queue: shuffled(shapes.map((_, i) => i)).slice(0, rounds),
+    current: null,
+    misses: 0,
+    found: 0,
+    clean: 0,
+  };
+  ui.done.hidden = true;
+  nextRound();
+}
+
+function nextRound() {
+  state.misses = 0;
+  state.current = state.queue.pop() ?? null;
+  updateScore();
+  if (state.current === null) return finish();
+  const name = state.shapes[state.current].name;
+  ui.hintWord.hidden = false;
+  ui.target.textContent = name;
+  speak(name);
+}
+
+function updateScore() {
+  ui.progress.textContent = `Знайдено ${state.found} з ${state.total}`;
+  ui.firsttry.textContent = `Без помилок: ${state.clean}`;
+}
+
+function finish() {
+  ui.target.textContent = "";
+  ui.hintWord.hidden = true;
+  ui.doneText.textContent = `З першого разу: ${state.clean} з ${state.total}`;
+  ui.done.hidden = false;
+  speak("Готово!");
+}
+
+function flash(name, event, kind) {
+  const box = ui.stage.getBoundingClientRect();
+  ui.flash.dataset.kind = kind;
+  ui.flash.textContent = name;
+  ui.flash.style.left = `${event.clientX - box.left}px`;
+  ui.flash.style.top = `${event.clientY - box.top}px`;
+  ui.flash.dataset.show = "1";
+  clearTimeout(flash.timer);
+  flash.timer = setTimeout(() => { ui.flash.dataset.show = "0"; }, 1400);
+}
+
+function onClick(event) {
+  if (!state || state.current === null) return;
+  const group = event.target.closest(".shape");
+  if (!group) return;
+  const index = Number(group.dataset.index);
+
+  if (index === state.current) {
+    const node = state.nodes[index];
+    node.group.classList.remove("hint");
+    node.group.classList.add("found");
+    if (!label(state.shapes[index], node)) flash(state.shapes[index].name, event, "ok");
+    state.found++;
+    if (state.misses === 0) state.clean++;
+    nextRound();
+    return;
+  }
+
+  state.misses++;
+  flash(state.shapes[index].name, event, "miss");
+  group.classList.add("miss");
+  setTimeout(() => group.classList.remove("miss"), 450);
+  if (state.misses === HINT_AFTER) state.nodes[state.current].group.classList.add("hint");
+}
+
+/* ---------- рівні ---------- */
+
+function validate(data) {
+  if (!Array.isArray(data) || !data.length) throw new Error("рівень порожній");
+  for (const shape of data) {
+    if (typeof shape.name !== "string" || !shape.name) throw new Error("фігура без назви");
+    if (!Array.isArray(shape.polygons) || !shape.polygons.length) throw new Error(`«${shape.name}» без багатокутників`);
+    for (const polygon of shape.polygons)
+      if (!Array.isArray(polygon) || polygon.length < 3) throw new Error(`«${shape.name}»: замалий багатокутник`);
+  }
+  return data;
+}
+
+async function openLevel(file) {
+  const response = await fetch(`levels/${file}`, { cache: "no-cache" });
+  if (!response.ok) throw new Error(`${file}: ${response.status}`);
+  const shapes = validate(await response.json());
+  ui.menu.hidden = true;
+  ui.game.hidden = false;
+  start(shapes);
+  return shapes;
+}
+
+function showError(message) {
+  ui.error.hidden = false;
+  ui.error.innerHTML = `${message}<br><br>Якщо відкриваєш файл із диска — потрібен локальний сервер:<br>` +
+    `<code>python3 -m http.server 8000</code>`;
+}
+
+async function boot() {
+  ui.speak.dataset.off = speechOff ? "1" : "0";
+  ui.speak.textContent = speechOff ? "🔇" : "🔊";
+
+  let index;
+  try {
+    const response = await fetch("levels/index.json", { cache: "no-cache" });
+    index = await response.json();
+  } catch (error) {
+    return showError("Не вдалося прочитати список рівнів.");
+  }
+
+  const entries = Object.entries(index);
+  for (const [title, file] of entries) {
+    const button = document.createElement("button");
+    button.className = "level-btn";
+    button.textContent = title;
+    button.onclick = () => openLevel(file).catch((e) => {
+      ui.menu.hidden = false;
+      ui.game.hidden = true;
+      showError(`Не вдалося відкрити рівень: ${e.message}`);
+    });
+    ui.levels.append(button);
+  }
+
+  const wanted = new URLSearchParams(location.search).get("level");
+  if (wanted) {
+    const match = entries.find(([, file]) => file.replace(/\.json$/, "") === wanted);
+    if (match) openLevel(match[1]).catch((e) => showError(`Не вдалося відкрити рівень: ${e.message}`));
+  }
+}
+
+ui.map.addEventListener("click", onClick);
+el("back").onclick = () => { ui.game.hidden = true; ui.menu.hidden = false; window.speechSynthesis?.cancel(); };
+el("again").onclick = () => start(state.shapes);
+el("to-menu").onclick = () => { ui.done.hidden = true; ui.game.hidden = true; ui.menu.hidden = false; };
+el("task").onclick = () => { if (state?.current !== null) speak(state.shapes[state.current].name); };
+ui.speak.onclick = () => {
+  speechOff = !speechOff;
+  localStorage.setItem("findshape.mute", speechOff ? "1" : "0");
+  ui.speak.dataset.off = speechOff ? "1" : "0";
+  ui.speak.textContent = speechOff ? "🔇" : "🔊";
+  if (speechOff) window.speechSynthesis?.cancel();
+  else if (state?.current !== null) speak(state.shapes[state.current].name);
+};
+
+boot();
+</script>
+</body>
+</html>

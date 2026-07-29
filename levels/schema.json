@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anatoliistepaniuk.github.io/FindShape/levels/schema.json",
+  "title": "Рівень FindShape",
+  "description": "Список фігур. Назва фігури — її ж ідентифікатор: та сама назва двічі означає одну фігуру з кількох шматків.",
+  "type": "array",
+  "minItems": 2,
+  "items": {
+    "type": "object",
+    "required": ["name", "polygons"],
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Те, що гра назве вголос і напише в завданні"
+      },
+      "polygons": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Шматки фігури: материк і острови — це просто кілька багатокутників",
+        "items": {
+          "type": "array",
+          "minItems": 3,
+          "description": "Замкнений контур; останню точку повторювати не треба",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Точка [x, y] у будь-якій системі координат — двіжок сам вписує все в екран",
+            "items": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}
